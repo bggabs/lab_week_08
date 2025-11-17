@@ -8,75 +8,79 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.work.Data
-import androidx.work.WorkManager
+import androidx.work.*
+import com.example.lab_week_08.worker.FirstWorker
+import com.example.lab_week_08.worker.SecondWorker
+import com.example.lab_week_08.worker.ThirdWorker
 
 class MainActivity : AppCompatActivity() {
 
-    private val workManager by lazy { WorkManager.getInstance(this) }
+    private val wm by lazy { WorkManager.getInstance(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        //enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        // handle insets
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
-
-        // notification permission (Android 13+)
+        // Permission for notification
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-
+                != PackageManager.PERMISSION_GRANTED
+            ) {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
             }
         }
 
-        // jalankan service
-        launchNotificationService()
+        startSequence()
     }
 
-    // ===========================
-    // Fungsi untuk menjalankan service
-    // ===========================
-    private fun launchNotificationService() {
+    private fun startSequence() {
 
-        // Observe jika service sudah selesai
-        NotificationService.trackingCompletion.observe(this) { Id ->
-            showResult("Process for Notification Channel ID $Id is done!")
+        // 1. FirstWorker
+        val first = OneTimeWorkRequest.Builder(FirstWorker::class.java).build()
+
+        // 2. SecondWorker
+        val second = OneTimeWorkRequest.Builder(SecondWorker::class.java).build()
+
+        // 4. ThirdWorker
+        val third = OneTimeWorkRequest.Builder(ThirdWorker::class.java).build()
+
+        wm.beginWith(first)
+            .then(second)
+            .enqueue()
+
+        // 3. NotificationService → setelah SecondWorker
+        wm.getWorkInfoByIdLiveData(second.id).observe(this) { info ->
+            if (info?.state == WorkInfo.State.SUCCEEDED) {
+                startFirstNotificationService()
+            }
         }
 
-        // Intent untuk memulai service
-        val serviceIntent = Intent(this, NotificationService::class.java).apply {
-            putExtra(EXTRA_ID, "001")
+        // ThirdWorker → setelah NotificationService selesai
+        NotificationService.trackingCompletion.observe(this) {
+            wm.enqueue(third)
         }
 
-        // Mulai service
-        ContextCompat.startForegroundService(this, serviceIntent)
+        // SecondNotificationService → setelah ThirdWorker
+        wm.getWorkInfoByIdLiveData(third.id).observe(this) { info ->
+            if (info?.state == WorkInfo.State.SUCCEEDED) {
+                startSecondNotificationService()
+            }
+        }
     }
 
-    // ===========================
-    // Util agar worker dapat input ID
-    // ===========================
-    private fun getIdInputData(idKey: String, idValue: String) =
-        Data.Builder()
-            .putString(idKey, idValue)
-            .build()
 
-    // ===========================
-    // Tampilkan toast
-    // ===========================
-    private fun showResult(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    private fun startFirstNotificationService() {
+        val intent = Intent(this, NotificationService::class.java)
+            .putExtra("Id", "001")
+        ContextCompat.startForegroundService(this, intent)
     }
 
-    companion object {
-        const val EXTRA_ID = "Id"
+    private fun startSecondNotificationService() {
+        val intent = Intent(this, SecondNotificationService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun showToast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 }
